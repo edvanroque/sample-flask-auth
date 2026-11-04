@@ -1,0 +1,24 @@
+### Testar rota Hello World
+GET http://127.0.0.1:5000/hello-world
+
+###
+
+### Testar Login com Sucesso
+POST http://127.0.0.1:5000/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "123"
+}
+
+###
+
+### Testar Login com Credenciais Inválidas
+POST http://127.0.0.1:5000/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "senha_errada"
+}

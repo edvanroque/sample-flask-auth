@@ -24,22 +24,24 @@ login_manager.login_view = 'login'
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# Rota de Registro/Cadastro de Novo Usuário (com hash da senha)
+# Rota de Registro/Cadastro de Novo Usuário
 @app.route('/user', methods=["POST"])
 def create_user():
     data = request.json
     username = data.get("username")
     password = data.get("password")
+    role = data.get("role", "user")
 
     if username and password:
-        # Gera o salt e cria o hash da senha em bytes
         hashed_password = bcrypt.hashpw(str.encode(password), bcrypt.gensalt())
-        
-        # Cria o usuário salvando o hash (decodificado como string utf-8 no banco)
-        user = User(username=username, password=hashed_password.decode('utf-8'))
+        user = User(
+            username=username, 
+            password=hashed_password.decode('utf-8'),
+            role=role
+        )
         db.session.add(user)
         db.session.commit()
-        return jsonify({"message": "Usuário cadastrado com sucesso!"}), 201
+        return jsonify({"message": f"Usuário {username} cadastrado com sucesso!"}), 201
 
     return jsonify({"message": "Dados inválidos"}), 400
 
@@ -52,12 +54,10 @@ def login():
     if username and password:
         user = User.query.filter_by(username=username).first()
 
-        # Valida senha: tanto se for hash bcrypt quanto senha antiga em texto puro
         if user:
             password_matches = False
             user_password_bytes = user.password.encode('utf-8')
 
-            # Verifica se o banco já contém um hash bcrypt válido ($2b$...)
             if user_password_bytes.startswith(b'$2b$') or user_password_bytes.startswith(b'$2a$'):
                 password_matches = bcrypt.checkpw(str.encode(password), user_password_bytes)
             else:
@@ -65,7 +65,6 @@ def login():
 
             if password_matches:
                 login_user(user)
-                print("Usuário autenticado:", current_user.is_authenticated)
                 return jsonify({"message": "Autenticação realizada com sucesso!"})
 
     return jsonify({"message": "Credenciais inválidas"}), 400
@@ -81,10 +80,18 @@ def logout():
 def read_user(id_user):
     user = User.query.get(id_user)
 
-    if user:
-        return jsonify({"username": user.username})
+    if not user:
+        return jsonify({"message": "Usuário não encontrado"}), 404
 
-    return jsonify({"message": "Usuário não encontrado"}), 404
+    # Regra: Utilizador comum só pode ver o seu próprio perfil, admin pode ver qualquer um
+    if current_user.role != "admin" and current_user.id != id_user:
+        return jsonify({"message": "Operação não permitida"}), 403
+
+    return jsonify({
+        "id": user.id,
+        "username": user.username,
+        "role": user.role
+    })
 
 @app.route('/user/<int:id_user>', methods=["PUT"])
 @login_required
@@ -92,37 +99,40 @@ def update_user(id_user):
     data = request.json
     user = User.query.get(id_user)
 
-    # Impede que um usuário altere a senha de terceiros
+    if not user:
+        return jsonify({"message": "Usuário não encontrado"}), 404
+
+    # Regra: Apenas o próprio utilizador pode alterar a sua senha
     if id_user != current_user.id:
         return jsonify({"message": "Operação não permitida"}), 403
 
-    if user and data.get("password"):
+    if data.get("password"):
         new_password = data.get("password")
         hashed_password = bcrypt.hashpw(str.encode(new_password), bcrypt.gensalt())
         user.password = hashed_password.decode('utf-8')
         db.session.commit()
         return jsonify({"message": f"Usuário {id_user} atualizado com sucesso!"})
 
-    return jsonify({"message": "Usuário não encontrado"}), 404
+    return jsonify({"message": "Dados inválidos"}), 400
 
 @app.route('/user/<int:id_user>', methods=["DELETE"])
 @login_required
 def delete_user(id_user):
     user = User.query.get(id_user)
 
-    # Impede que um usuário comum delete terceiros
-    if id_user != current_user.id:
+    if not user:
+        return jsonify({"message": "Usuário não encontrado"}), 404
+
+    # Regra: Só pode apagar se for admin ou se for a própria conta
+    if current_user.role != "admin" and id_user != current_user.id:
         return jsonify({"message": "Operação não permitida"}), 403
 
-    if user:
-        if current_user.id == user.id:
-            logout_user()
+    if current_user.id == user.id:
+        logout_user()
 
-        db.session.delete(user)
-        db.session.commit()
-        return jsonify({"message": f"Usuário {id_user} deletado com sucesso!"})
-
-    return jsonify({"message": "Usuário não encontrado"}), 404
+    db.session.delete(user)
+    db.session.commit()
+    return jsonify({"message": f"Usuário {id_user} deletado com sucesso!"})
 
 @app.route("/hello-world", methods=["GET"])
 def hello_world():
